@@ -42,7 +42,7 @@ export default {
       const { message: stripped, calls } = stripKey(message);
       for (const call of calls) {
         const key = await verifyKey(env.KEY_SECRET, call.key, Date.now());
-        const reason = key ? checkCall(call, key.repos) : 'gh_mcp_relay_key が無いか、正しくありません';
+        const reason = key ? checkCall(call, key.repos, route.path) : 'gh_mcp_relay_key が無いか、正しくありません';
         if (reason) {
           log(route.path, call.tool, 'denied');
           return json(200, rpcError(call.id, -32001, reason));
@@ -73,7 +73,7 @@ export default {
     }
 
     if (isToolsList && upstream.ok) {
-      const patched = injectKeyParam(await upstream.text(), upstream.headers.get('content-type'));
+      const patched = injectKeyParam(await upstream.text(), upstream.headers.get('content-type'), route.path);
       return new Response(patched, { status: upstream.status, headers: responseHeaders });
     }
     return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });

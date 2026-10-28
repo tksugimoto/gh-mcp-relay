@@ -76,6 +76,33 @@ test('issues のパスの 401 も scope を伝える', async () => {
   assert.match(res.headers.get('www-authenticate'), /, scope="repo"$/);
 });
 
+test('pull_requests のパスの 401 も scope を伝える', async () => {
+  stubFetch();
+  const res = await worker.fetch(new Request('https://relay.example.com/mcp/x/pull_requests', { method: 'POST', body: '{}' }), env);
+  assert.equal(res.status, 401);
+  assert.match(res.headers.get('www-authenticate'), /, scope="repo"$/);
+});
+
+test('pull_requests のパスでは merge_pull_request を転送しない', async () => {
+  const forwarded = stubFetch();
+  const message = {
+    jsonrpc: '2.0',
+    id: 7,
+    method: 'tools/call',
+    params: { name: 'merge_pull_request', arguments: { [KEY_ARG]: KEY, owner: repoArgs.owner, repo: repoArgs.repo, pullNumber: 1 } },
+  };
+  const res = await worker.fetch(
+    new Request('https://relay.example.com/mcp/x/pull_requests', {
+      method: 'POST',
+      headers: { authorization: 'Bearer gho_test', 'content-type': 'application/json' },
+      body: JSON.stringify(message),
+    }),
+    env,
+  );
+  assert.match((await res.json()).error.message, /merge_pull_request は中継で使えません/);
+  assert.equal(forwarded.length, 0);
+});
+
 test('上流のエラーは、理由をログに残してそのまま返す', async () => {
   stubFetch({
     upstream: () =>

@@ -77,7 +77,7 @@ GitHub App とコネクタは1つだけ作り、どのセッションからも�
 
 GitHub App を入れられない repo（ほかの人の private の repo など）は、OAuth App で認可する読み取り専用のコネクタを別に足して読みます（URL は `/mcp/readonly`）。OAuth App の token は GitHub 側で repo を絞れないので、境界は key と readonly のパスだけになります。手順と弱くなる点は [README.md](../README.md) にまとめています。
 
-このコネクタは読み取り専用なので、ほかの人の個人のアカウントの private の repo（`tksugimoto-ai` が collaborator）には PR を出せません。PR 専用の OAuth のコネクタ（`/mcp/x/pull_requests`）を足す案がありますが、OAuth App の token は `repo` の scope を持ち、個人の repo の collaborator は必ず Write なので、そのままでは `merge_pull_request` が通ってしまいます。足すなら、中継でこのパスの `merge_pull_request` を常に拒否します（URL の query で指定する案より、決め打ちのほうが書き忘れが無い）。claude.ai のコネクタの設定でのツールの拒否は補助で、どの対策も token が漏れたときは効きません。持ち主に GitHub App を install してもらい、`/mcp` で PR を出す方法もあります（未確認）。詳しくは [README.md](../README.md) にまとめています。どれもまだ試していません。
+Issue とコメントを書くときは `/mcp/x/issues`、PR を出すときは `/mcp/x/pull_requests` のコネクタを、同じ OAuth App で足します。OAuth App の token は `repo` の scope を持ち、個人の repo の collaborator は必ず Write なので、そのままでは `merge_pull_request` が通ってしまいます。中継は OAuth App のコネクタのパス（`repo` の scope を求めるパス）で `merge_pull_request` を常に拒否します（URL の query で指定する案より、決め打ちのほうが書き忘れが無い）。claude.ai のコネクタの設定でのツールの拒否は補助で、どの対策も token が漏れたときは効きません。持ち主に GitHub App を install してもらい、`/mcp` で PR を出す方法もあります（未確認）。詳しくは [README.md](../README.md) にまとめています。
 
 | 守るもの | 強制するもの | 仕組み |
 | --- | --- | --- |
@@ -150,7 +150,7 @@ key は `gh-mcp-relay:<owner/repo>[,<owner/repo>...][:<期限>]:<署名>` の形
 | --- | --- | --- |
 | key がセッションから読める | 別のセッションに key を書き写されると、その repo を使われる | 期限つきで発行する。必要なら `KEY_SECRET` を入れ替える |
 | ほかのセッションから key を入手される | 同じ claude.ai アカウントのセッションは、ほかのセッションの会話記録を読める（確かめた）。key はツールの引数に入るので、記録に残る。ほかのセッションにメッセージを送って key を聞き出すこともできると考えられる（推論で、試していない）。このため、同じアカウントの中では key は強い境界にならない | 強い境界が要る repo（org の private など）は、claude.ai のアカウントを分ける。key を置かない環境では、ほかのセッションを読む・送るツールを deny する（効くかは未確認） |
-| OAuth App のコネクタ | GitHub App を入れられない repo を読むための OAuth App の token は、`repo` の scope で `tksugimoto-ai` が触れる全 repo に読み書きでき、期限も無い | readonly のパスでだけ登録し、書き込みのツールを出さない（token そのものは書き込めるので、token が漏れたときには効かない。被害の上限は `tksugimoto-ai` の権限の全体なので、その権限を小さく保つ）。強い境界が要る repo は claude.ai のアカウントを分ける。要らなくなったら token を取り消す |
+| OAuth App のコネクタ | GitHub App を入れられない repo を読むための OAuth App の token は、`repo` の scope で `tksugimoto-ai` が触れる全 repo に読み書きでき、期限も無い | readonly のパス（と、書き込みを Issue・PR に絞る `/mcp/x/issues`・`/mcp/x/pull_requests`）でだけ登録し、ほかの書き込みのツールを出さない。PR のパスでもマージは中継が拒否する（token そのものは書き込めるので、token が漏れたときには効かない。被害の上限は `tksugimoto-ai` の権限の全体なので、その権限を小さく保つ）。強い境界が要る repo は claude.ai のアカウントを分ける。要らなくなったら token を取り消す |
 | key を1つずつ取り消せない | 中継が key を記録しないため | 期限を短めにする。全部を無効にするときは `KEY_SECRET` を入れ替える |
 | fork への git push | 組み込みの GitHub 連携（Claude GitHub App）で行うので、中継の key の確認は効かない | 組み込みの連携は、そのセッションに追加した repo にしか届かない。Claude GitHub App は fork にだけ入れ、本流には入れない。本流に入るのは、人がマージした PR だけになる |
 | 中継を通る通信 | token と PR 本文が中継を通過する | ヘッダーをログに残さない。信頼できるホスティング先に置く |

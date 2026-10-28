@@ -75,10 +75,14 @@ test('resourceMetadata: GitHub を認可サーバーとして返す', () => {
   // Issue とコメントだけを書く OAuth App のコネクタのパスでも返す。
   assert.equal(oauthScope('/mcp/x/issues'), 'repo');
   assert.equal(oauthScope('/mcp/x/issues/'), 'repo');
-  // repo の scope を求めるのは、パスの末尾が /readonly のときと、issues のパスだけ。
+  // PR を出す OAuth App のコネクタのパスでも返す。
+  assert.equal(oauthScope('/mcp/x/pull_requests'), 'repo');
+  assert.equal(oauthScope('/mcp/x/pull_requests/'), 'repo');
+  // repo の scope を求めるのは、パスの末尾が /readonly のときと、issues・pull_requests のパスだけ。
   assert.equal(oauthScope('/mcp/readonly/x'), null);
   assert.equal(oauthScope('/mcp/x/issues_x'), null);
-  assert.equal(oauthScope('/mcp/x/pull_requests'), null);
+  assert.equal(oauthScope('/mcp/x/pull_requests_x'), null);
+  assert.equal(oauthScope('/mcp/x/repos'), null);
   assert.equal(oauthScope('/mcp/x/all'), null);
   assert.equal(oauthScope('/mcp'), null);
 });
@@ -219,6 +223,29 @@ test('injectKeyParam: JSON と SSE の両方で引数を足す', () => {
   const sse = `event: message\ndata: ${JSON.stringify(result)}\n\n`;
   const line = injectKeyParam(sse, 'text/event-stream').split('\n')[1];
   assert.ok(JSON.parse(line.slice(5)).result.tools[0].inputSchema.properties[KEY_ARG]);
+});
+
+test('checkCall: OAuth App のコネクタのパスでは merge_pull_request を使わせない', () => {
+  const allowed = ['tksugimoto/a'];
+  const merge = { tool: 'merge_pull_request', args: { owner: 'tksugimoto', repo: 'a', pullNumber: 1 } };
+  assert.match(checkCall(merge, allowed, '/mcp/x/pull_requests'), /merge_pull_request は中継で使えません/);
+  assert.match(checkCall(merge, allowed, '/mcp/x/pull_requests/'), /使えません/);
+  // GitHub App のコネクタのパスでは、今までどおり使える。
+  assert.equal(checkCall(merge, allowed, '/mcp/x/all'), null);
+  assert.equal(checkCall(merge, allowed, '/mcp'), null);
+  assert.equal(checkCall(merge, allowed), null);
+  // PR を出すツールは使える。
+  const create = { tool: 'create_pull_request', args: { owner: 'tksugimoto', repo: 'a', head: 'other:branch', base: 'main', title: 'x' } };
+  assert.equal(checkCall(create, allowed, '/mcp/x/pull_requests'), null);
+});
+
+test('injectKeyParam: OAuth App のコネクタのパスでは merge_pull_request を tools/list から外す', () => {
+  const names = ['create_pull_request', 'merge_pull_request', 'update_pull_request'];
+  const result = { jsonrpc: '2.0', id: 1, result: { tools: names.map((name) => ({ name, inputSchema: { type: 'object' } })) } };
+  const listed = (path) => JSON.parse(injectKeyParam(JSON.stringify(result), 'application/json', path)).result.tools.map((tool) => tool.name);
+  assert.deepEqual(listed('/mcp/x/pull_requests'), ['create_pull_request', 'update_pull_request']);
+  assert.deepEqual(listed('/mcp/x/all'), names);
+  assert.deepEqual(listed(undefined), names);
 });
 
 test('injectKeyParam: 使えないツールを tools/list から外す', () => {

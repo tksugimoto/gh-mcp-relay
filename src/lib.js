@@ -83,6 +83,10 @@ const REPO_TOOLS = new Set([
   'list_discussion_categories',
   'list_discussions',
 ]);
+// OAuth App のコネクタのパス（oauthScope が scope を返すパス）では使わせないツール。OAuth App の token は repo の
+// scope を持ち、個人のアカウントの repo のコラボレーターは必ず Write なので、GitHub 側ではマージを止められない。
+// pull_requests のパスで PR を出せるようにしても、マージは中継で止める。
+const OAUTH_DENIED_TOOLS = new Set(['merge_pull_request']);
 // owner/repo を取らないが、どの repo にも届かないので許すツール。
 const REPOLESS_TOOLS = new Set(['get_me']);
 // method で動きを変えるツールの、使ってよい method。一覧に無い method（上流が足したものを含む）や、method の無い
@@ -130,9 +134,9 @@ export function matchRoute(pathname) {
 
 // OAuth App で認可するときに求める scope。OAuth App の token は求めた scope しか持たないので、
 // private の repo に届くには repo が要る。OAuth App のコネクタは readonly のパスと、Issue とコメントだけを
-// 書く issues のパスで登録する（同じ URL のコネクタは 2 つ登録できない）ので、そのパスでだけ返す。
-// GitHub App は scope を見ない。
-const OAUTH_PATH_RE = /^(?:.*\/readonly|\/mcp\/x\/issues)\/?$/;
+// 書く issues のパス、PR を出す pull_requests のパスで登録する（同じ URL のコネクタは 2 つ登録できない）ので、
+// そのパスでだけ返す。GitHub App は scope を見ない。
+const OAUTH_PATH_RE = /^(?:.*\/readonly|\/mcp\/x\/(?:issues|pull_requests))\/?$/;
 export function oauthScope(path) {
   return OAUTH_PATH_RE.test(path) ? 'repo' : null;
 }
@@ -209,13 +213,15 @@ export function reposInArgs(args) {
   return found;
 }
 
-export function isAllowedTool(name) {
+// path は、そのパスでだけ使わせないツールを決めるのに使う（省くと、パスによらない一覧だけで決める）。
+export function isAllowedTool(name, path) {
+  if (path !== undefined && oauthScope(path) && OAUTH_DENIED_TOOLS.has(name)) return false;
   return REPO_TOOLS.has(name) || REPOLESS_TOOLS.has(name);
 }
 
 // tools/call を key の範囲で許すか。許さないときは理由を返す。
-export function checkCall(call, allowedRepos) {
-  if (!isAllowedTool(call.tool)) return `${call.tool} は中継で使えません`;
+export function checkCall(call, allowedRepos, path) {
+  if (!isAllowedTool(call.tool, path)) return `${call.tool} は中継で使えません`;
   const methods = TOOL_METHODS.get(call.tool);
   const method = call.args?.method;
   if (methods ? !methods.has(method) : method !== undefined) return `${call.tool} の method ${method} は中継で使えません`;
@@ -271,10 +277,10 @@ const KEY_PROPERTY = {
 
 // tools/list の結果から使えないツールを外し、残りの各ツールに gh_mcp_relay_key 引数を足す。
 // Claude が使えないツールを呼んだり、引数を渡し忘れたりしないようにするため。
-function injectIntoResult(msg) {
+function injectIntoResult(msg, path) {
   const tools = msg?.result?.tools;
   if (!Array.isArray(tools)) return msg;
-  const patched = tools.filter((tool) => isAllowedTool(tool.name)).map((tool) => {
+  const patched = tools.filter((tool) => isAllowedTool(tool.name, path)).map((tool) => {
     const schema = tool.inputSchema ?? { type: 'object' };
     const required = new Set(schema.required ?? []);
     required.add(KEY_ARG);
@@ -290,14 +296,14 @@ function injectIntoResult(msg) {
   return { ...msg, result: { ...msg.result, tools: patched } };
 }
 
-export function injectKeyParam(bodyText, contentType) {
+export function injectKeyParam(bodyText, contentType, path) {
   if ((contentType ?? '').includes('text/event-stream')) {
     return bodyText
       .split('\n')
       .map((line) => {
         if (!line.startsWith('data:')) return line;
         try {
-          return `data: ${JSON.stringify(injectIntoResult(JSON.parse(line.slice(5))))}`;
+          return `data: ${JSON.stringify(injectIntoResult(JSON.parse(line.slice(5)), path))}`;
         } catch {
           return line;
         }
@@ -305,6 +311,6 @@ export function injectKeyParam(bodyText, contentType) {
       .join('\n');
   }
   const parsed = JSON.parse(bodyText);
-  const patched = Array.isArray(parsed) ? parsed.map(injectIntoResult) : injectIntoResult(parsed);
+  const patched = Array.isArray(parsed) ? parsed.map((msg) => injectIntoResult(msg, path)) : injectIntoResult(parsed, path);
   return JSON.stringify(patched);
 }
